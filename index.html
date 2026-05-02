@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Studio J - Realtime Monitor</title>
+    <style>
+        :root { --bg: #121212; --card: #1e1e1e; --primary: #0a84ff; --danger: #ff453a; --text: #ffffff; }
+        body { font-family: 'Pretendard', -apple-system, sans-serif; background: var(--bg); color: var(--text); display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: var(--card); padding: 30px; border-radius: 24px; width: 350px; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.4); border: 1px solid #333; }
+        h2, h3 { margin-top: 0; color: var(--primary); }
+        .value { font-size: 2.5rem; font-weight: 800; margin: 15px 0; color: var(--text); }
+        .stats { display: flex; justify-content: space-around; margin: 25px 0; padding: 15px; background: #2c2c2e; border-radius: 15px; }
+        .stat-item { flex: 1; }
+        .stat-label { font-size: 0.7rem; color: #8e8e93; text-transform: uppercase; }
+        .stat-val { font-size: 1.1rem; font-weight: 600; }
+        .btn-group { display: flex; gap: 10px; }
+        button { flex: 1; padding: 14px; border: none; border-radius: 12px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        .btn-red { background: var(--danger); color: white; }
+        .btn-gray { background: #3a3a3c; color: white; }
+        button:hover { opacity: 0.8; transform: scale(0.98); }
+        input { width: 100%; padding: 12px; margin-bottom: 20px; border-radius: 10px; border: 1px solid #333; background: #2c2c2e; color: white; box-sizing: border-box; }
+        #dashboard { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="card" id="login-card">
+    <h2>Studio J</h2>
+    <p style="color:#8e8e93;">시스템 접속 비밀번호 입력</p>
+    <input type="password" id="pwInput" placeholder="Password" onkeyup="if(window.event.keyCode==13){fetchData()}">
+    <button style="background: var(--primary); color:white; width:100%;" onclick="fetchData()">접속하기</button>
+</div>
+
+<div class="card" id="dashboard">
+    <h3 style="font-size: 0.9rem; letter-spacing: 2px;">PC 모니터링</h3>
+    <div style="margin: 20px 0;">
+        <div class="stat-label">사용한 시간</div>
+        <div id="uptime" class="value">0시간 0분</div>
+    </div>
+    <div class="stats">
+        <div class="stat-item">
+            <div class="stat-label">CPU 사용량</div>
+            <div id="cpu" class="stat-val">0</div><small>%</small>
+        </div>
+        <div class="stat-item" style="border-left: 1px solid #444;">
+            <div class="stat-label">RAM 사용량</div>
+            <div id="ram" class="stat-val">0</div><small>%</small>
+        </div>
+    </div>
+    <div style="font-size: 0.7rem; color: #636366; margin-bottom: 20px;">Last Sync: <span id="time">-</span></div>
+    
+    <div class="btn-group">
+        <button class="btn-gray" onclick="sendCommand('sleep')">절전 모드 명령 전송</button>
+        <button class="btn-red" onclick="confirmShutdown()">시스템 종료 명령 전송 (데이터 손실 위험)</button>
+    </div>
+</div>
+
+<script>
+    const dbUrl = "https://studio-j-monitor-default-rtdb.asia-southeast1.firebasedatabase.app/usage.json";
+    const cmdUrl = "https://studio-j-monitor-default-rtdb.asia-southeast1.firebasedatabase.app/command.json";
+    let isLoggedin = false;
+
+    async function fetchData() {
+        try {
+            const response = await fetch(dbUrl);
+            const data = await response.json();
+            const inputPw = document.getElementById('pwInput').value;
+
+            if (inputPw === data.pw || isLoggedin) {
+                isLoggedin = true;
+                document.getElementById('login-card').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
+                
+                document.getElementById('cpu').innerText = data.cpu;
+                document.getElementById('ram').innerText = data.ram;
+                document.getElementById('uptime').innerText = data.uptime;
+                document.getElementById('time').innerText = data.last_check;
+            } else {
+                alert("비밀번호가 올바르지 않습니다.");
+            }
+        } catch (e) { console.error("Data fetch error:", e); }
+    }
+
+    // 2초마다 자동 업데이트 (로그인 상태일 때만)
+    setInterval(() => { if (isLoggedin) fetchData(); }, 1000);
+
+    async function sendCommand(cmd) {
+        if(!confirm(cmd + " 명령을 수행할까요?")) return;
+        await fetch(cmdUrl, { method: 'PUT', body: JSON.stringify(cmd) });
+        alert("명령이 전송되었습니다.");
+    }
+
+    function confirmShutdown() { sendCommand('shutdown'); }
+</script>
+
+</body>
+</html>
