@@ -1,79 +1,62 @@
 import psutil
-import requests
 import time
+import datetime
 import os
-from datetime import datetime
+import requests
 from dotenv import load_dotenv
 
-# 1. .env 파일 로드 (파일이 같은 폴더에 있어야 해!)
 load_dotenv()
 
-# 2. 환경 변수에서 데이터베이스 주소와 비번 가져오기
 DB_URL = os.getenv("DB_URL")
 MY_PASSWORD = os.getenv("MY_PASSWORD")
+BASE_URL = DB_URL.replace(".json", "").rstrip("/")
 
-# 에러 체크: .env 파일을 못 읽었을 경우를 대비
-if DB_URL is None:
-    print("❌ 에러: .env 파일을 찾을 수 없거나 DB_URL이 비어 있습니다.")
-    print(f"현재 실행 경로: {os.getcwd()}")
-    print(".env 파일이 이 경로에 있는지 확인주십시오.")
-    exit()
+def update_firebase(data):
+    try:
+        requests.patch(f"{BASE_URL}.json", json={"pc_status": data}, timeout=5)
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 업데이트 완료")
+    except:
+        pass
 
-# 원격 명령용 URL 생성 (usage.json -> command.json)
-CMD_URL = DB_URL.replace("usage.json", "command.json")
+# --- 핵심: 서버에서 기존 시간 불러오기 ---
+def get_remote_usage():
+    try:
+        res = requests.get(f"{BASE_URL}/pc_status/today_usage_seconds.json", timeout=5).json()
+        return int(res) if res else 0
+    except:
+        return 0
 
-def get_uptime():
-    """컴퓨터 부팅 이후 흐른 시간을 계산하는 함수"""
-    boot_time = datetime.fromtimestamp(psutil.boot_time())
-    now = datetime.now()
-    uptime = now - boot_time
-    
-    hours, remainder = divmod(int(uptime.total_seconds()), 3600)
-    minutes, _ = divmod(remainder, 60)
-    return f"{hours}시간 {minutes}분"
+last_date = datetime.date.today().strftime("%Y-%m-%d")
+# 앱 켜질 때 서버에 저장된 '초'를 가져와서 시작점으로 잡음
+accumulated_seconds = get_remote_usage()
+start_time = time.time()
 
-def send_data():
-    print("PC 모니터링 시스템 가동 중...")
-    
-    while True:
-        try:
-            # 1. 웹에서 내린 원격 명령이 있는지 확인
-            try:
-                cmd_res = requests.get(CMD_URL).json()
-                if cmd_res == "shutdown":
-                    print("⚠️ 원격 종료 명령 수신! 10초 뒤 컴퓨터를 종료합니다.")
-                    requests.put(CMD_URL, json="") # 명령 초기화
-                    os.system("shutdown /s /t 10")
-                    break
-                elif cmd_res == "sleep":
-                    print("💤 원격 절전 명령 수신!")
-                    requests.put(CMD_URL, json="") # 명령 초기화
-                    os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
-            except Exception as cmd_e:
-                print(f"명령 확인 중 오류(무시 가능): {cmd_e}")
+print(f"Studio J Agent: {accumulated_seconds}초부터 이어서 측정 시작!")
 
-            # 2. 내 컴퓨터 사용량 데이터 준비
-            usage_data = {
-                "cpu": psutil.cpu_percent(interval=1),
-                "ram": psutil.virtual_memory().percent,
-                "uptime": get_uptime(),
-                "pw": MY_PASSWORD,
-                "last_check": time.strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-            # 3. 파이어베이스로 전송
-            response = requests.put(DB_URL, json=usage_data)
-            
-            if response.status_code == 200:
-                print(f"[{usage_data['last_check']}] 보고 완료 | 사용시간: {usage_data['uptime']} | CPU: {usage_data['cpu']}%")
-            else:
-                print(f"❌ 전송 실패: {response.status_code}")
-                
-        except Exception as e:
-            print(f"🚨 예외 발생: {e}")
-            
-        # 10초마다 반복 (원격 명령을 빠르게 확인하려면 이 시간을 줄여도 돼)
-        time.sleep(0.5)
+while True:
+    now = datetime.datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
 
-if __name__ == "__main__":
-    send_data()
+    # 1. 00시 초기화 (날짜가 바뀌면 서버 데이터도 무시하고 0부터)
+    if today_str != last_date:
+        accumulated_seconds = 0
+        start_time = time.time()
+        last_date = today_str
+        print("날짜 변경으로 초기화!")
+
+    # 2. 현재 사용 시간 = (기존에 써온 시간) + (앱 켜진 후 흐른 시간)
+    total_seconds = accumulated_seconds + int(time.time() - start_time)
+    time_str = str(datetime.timedelta(seconds=total_seconds))
+
+    # 3. 데이터 전송 (오늘 총 '초'수도 같이 저장해서 다음에 이어서 쓸 수 있게 함)
+    update_data = {
+        "today_usage": time_str,
+        "today_usage_seconds": total_seconds, # 요게 포인트!
+        "last_seen": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "Online",
+        "password": MY_PASSWORD,
+        "day": ['월','화','수','목','금','토','일'][now.weekday()]
+    }
+    update_firebase(update_data)
+
+    time.sleep(5)
